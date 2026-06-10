@@ -1,0 +1,26 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Local secrets / env
+.env
+.env.*
+
+# Session media and generated transcripts (large files)
+audio/
+output/
+
+# Campaign-specific (local only)
+names.txt
+prompts/
