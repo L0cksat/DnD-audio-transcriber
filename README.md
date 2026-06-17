@@ -40,7 +40,9 @@ Session recap (.md)
 - **Speaker diarization** output (`SPEAKER_00`, `SPEAKER_01`, etc.) with segment timestamps
 - **Campaign glossary** (`names.txt`) to correct fantasy names and places in Gemini
 - **Reusable recap prompt** (`prompts/gemini_recap.txt`) for consistent session summaries
-- Pilot script (`pilot_whisperx.py`) validated on a 10-minute session sample
+- **Automation pipeline** — PowerShell menu script that orchestrates chunking, transcribing, and merging
+- Pilot script (`pilot_whisperx.py`) now accepts CLI arguments (no hardcoded paths)
+- **Automatic merge** of chunked transcripts into a single continuous-timestamp file
 
 ## Requirements
 
@@ -116,24 +118,69 @@ Copy or create these files before running the Gemini step. Update `names.txt` af
 
 ## Usage
 
-### 1. Transcribe audio (WhisperX pilot)
+### Pipeline overview
 
-Edit paths in `pilot_whisperx.py` for your input MP3 and output directory, then run:
+```text
+Raw MP3
+   |
+   v
+[1. Prepare Audio]   ─── ffmpeg chunking (1-hour segments)
+   |
+   v
+[2. Transcribe]      ─── transcriber.py
+   ├── Loops over chunks
+   ├── Calls pilot_whisperx.py per chunk (argparse input/output)
+   └── Merges all transcripts into one continuous-timestamp file
+   |
+   v
+[3. Recap (manual)]  ─── Gemini Advanced + names.txt
+```
+
+### 1. Run the menu (recommended)
 
 ```powershell
 .\venv\Scripts\Activate.ps1
 $env:HF_TOKEN = "hf_xxxxxxxxxxxxxxxx"
-python pilot_whisperx.py
+.\transcriber.ps1
 ```
 
-Default script settings:
+Menu options:
+
+| Option | Description |
+|--------|-------------|
+| **1 — Prepare Audio** | Enter the audio file path. Extracts session name via regex, creates `chunks\session_N` folder, splits into 1-hour segments with ffmpeg. |
+| **2 — Transcribe Audio** | Enter the chunks directory path. Runs `transcriber.py` which transcribes all chunks via whisperx, then merges into `sessionN_merged_whisperx.txt`. |
+| **3 — Exit** | |
+
+### 2. Transcribe directly (advanced)
+
+Process a single chunk with `pilot_whisperx.py`:
+
+```powershell
+python pilot_whisperx.py "input.mp3" "output.txt"
+```
+
+Process all chunks and merge with `transcriber.py`:
+
+```powershell
+python transcriber.py "J:\DnD Sessions audio\chunks\session_N"
+```
+
+Flags:
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Print what would be done without running whisperx |
+| `--merge-only` | Skip transcribing, just merge existing transcript files |
+
+### Settings (pilot_whisperx.py)
 
 | Setting | Value |
 |---------|-------|
 | Model | `large-v3` |
 | Language | `es` |
 | Device | `cuda` |
-| Compute type | `float16` |
+| Compute type | `int8_float16` |
 | Batch size | `8` (reduce to `4` if VRAM runs out) |
 
 Output format (one line per segment):
@@ -150,7 +197,7 @@ nvidia-smi -l 2
 
 Close GPU-intensive desktop applications before transcribing multi-hour sessions to avoid VRAM pressure on 8 GB cards.
 
-### 2. Generate a recap (Gemini Advanced)
+### 3. Generate a recap (Gemini Advanced)
 
 This step is manual and uses a personal Gemini Advanced subscription (no API integration in this repository).
 
@@ -166,17 +213,17 @@ The prompt requests sections for summary, key events, NPCs, combat, social scene
 
 ```text
 DnD-audio-transcriber/
-  pilot_whisperx.py      # WhisperX pilot transcription script
+  transcriber.ps1        # PowerShell menu: Prepare Audio → Transcribe → Exit
+  transcriber.py         # Orchestrator: loops chunks, transcribes, merges
+  pilot_whisperx.py      # WhisperX single-file transcribe + diarize (argparse CLI)
   requirements.txt       # Python dependencies (WhisperX)
   names.txt              # Local campaign glossary (gitignored)
   prompts/
     gemini_recap.txt     # Local Gemini prompt template (gitignored)
   venv/                  # Virtual environment (gitignored)
-  audio/                 # Optional local input folder (gitignored)
-  output/                # Optional local output folder (gitignored)
 ```
 
-Session audio and transcripts may be stored outside the repository (for example on a dedicated drive). Update paths in `pilot_whisperx.py` accordingly.
+Session audio and transcripts are stored outside the repository (for example on a dedicated drive).
 
 ## Development notes
 
@@ -184,16 +231,23 @@ Session audio and transcripts may be stored outside the repository (for example 
 
 - The legacy `openai-whisper` CLI on CPU produced poor throughput (on the order of hours for short samples). CUDA PyTorch inside the project `venv` is required for practical runtimes.
 - On 8 GB VRAM, `large-v3` can consume most available GPU memory. Reducing `BATCH_SIZE` or closing other GPU applications improves stability.
+- Must delete models between steps (`del model`, `gc.collect()`, `torch.cuda.empty_cache()`) to free VRAM for diarization on 8 GB cards.
+- Use `compute_type="int8_float16"` to reduce memory usage without significant quality loss.
 - WhisperX diarization uses `token=`, not the deprecated `use_auth_token=` parameter.
 - Speaker labels (`SPEAKER_XX`) are not character names; map speakers to PCs and the DM using context and `names.txt`.
 - Gemini recaps reached roughly 80% accuracy on a 10-minute pilot after glossary tuning; `names.txt` is the primary lever for improving name and place spelling.
+- PowerShell requires function definitions before their first call (unlike Python).
+- Zero-padded chunk names (`%02d`) ensure reliable alphabetical sort order for merging.
+- Offset-based merge (3600s per chunk) produces human-readable continuous timestamps without reading file tails.
 
 ### Roadmap
 
+- [x] Run a full-length session transcription (3--4 hours)
+- [x] Promote `pilot_whisperx.py` into a configurable CLI (`transcriber.py`)
+- [x] Audio chunking for very long sessions on 8 GB GPUs
 - [ ] Finalize `names.txt` for the current campaign
-- [ ] Run a full-length session transcription (3--4 hours)
-- [ ] Promote `pilot_whisperx.py` into a configurable CLI (`transcribe.py`)
-- [ ] Optional audio chunking for very long sessions on 8 GB GPUs
+- [ ] Process remaining sessions (3 through N)
+- [ ] Auto-upload transcripts to Notion campaign database
 
 ## License
 
